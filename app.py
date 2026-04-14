@@ -750,3 +750,4 @@ with col_f2:
     if st.button("🔄 Forçar recarga", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
