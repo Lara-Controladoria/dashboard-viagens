@@ -29,6 +29,8 @@ warnings.filterwarnings("ignore")
 #             2) pasta local Windows (uso interno)
 # ─────────────────────────────────────────────────────────────
 CAMINHO_EXCEL = Path(__file__).parent / "Base_2.xlsx"
+if not CAMINHO_EXCEL.exists():
+    CAMINHO_EXCEL = Path(__file__).parent / "Base_2.xlsx"
 
 ANO_DASHBOARD = 2026
 
@@ -750,4 +752,3 @@ with col_f2:
     if st.button("🔄 Forçar recarga", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-
