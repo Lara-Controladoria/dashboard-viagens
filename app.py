@@ -25,12 +25,10 @@ warnings.filterwarnings("ignore")
 
 # ─────────────────────────────────────────────────────────────
 # CAMINHO DO ARQUIVO
-# Prioridade: 1) raiz do repositório (Streamlit Cloud / GitHub)
-#             2) pasta local Windows (uso interno)
 # ─────────────────────────────────────────────────────────────
-CAMINHO_EXCEL = Path(__file__).parent / "Base_2.xlsx"
+CAMINHO_EXCEL = Path(r"C:\Users\lara.matos\Desktop\Viagens\First\Base_2.xlsx")
 if not CAMINHO_EXCEL.exists():
-    CAMINHO_EXCEL = Path(r"C:\Users\lara.matos\Desktop\Viagens\First\Base_2.xlsx")
+    CAMINHO_EXCEL = Path(__file__).parent / "Base_2.xlsx"
 
 ANO_DASHBOARD = 2026
 
