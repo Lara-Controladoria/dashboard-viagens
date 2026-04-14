@@ -1,604 +1,754 @@
 """
-Dashboard: Despesas de Viagens - FIRSTLAB
-Fonte: Base.2.xlsx
+═══════════════════════════════════════════════════════════════
+Dashboard: Faturamento x Despesa Realizada
+Empresa: First / Integracsc
+Arquivo de dados: Base_2.xlsx
+Auto-reload: monitora o arquivo e recarrega ao detectar mudança
+
+REGRAS DE FATURAMENTO:
+  - Coluna D (valor) considerada SOMENTE quando coluna C = "Considerar"
+  - Ano fixo: 2026
+  - Corte automático: apenas meses com dados completos de despesa
+═══════════════════════════════════════════════════════════════
 """
 
-import pandas as pd
-import numpy as np
 import streamlit as st
-import plotly.express as px
+import pandas as pd
 import plotly.graph_objects as go
-import os, re, base64
+import plotly.express as px
+from pathlib import Path
+import time
+import os
+import warnings
 
+warnings.filterwarnings("ignore")
+
+# ─────────────────────────────────────────────────────────────
+# CAMINHO DO ARQUIVO
+# Prioridade: 1) raiz do repositório (Streamlit Cloud / GitHub)
+#             2) pasta local Windows (uso interno)
+# ─────────────────────────────────────────────────────────────
+CAMINHO_EXCEL = Path(__file__).parent / "Base_2.xlsx"
+if not CAMINHO_EXCEL.exists():
+    CAMINHO_EXCEL = Path(r"C:\Users\lara.matos\Desktop\Viagens\First\Base_2.xlsx")
+
+ANO_DASHBOARD = 2026
+
+MESES_NOMES = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
+               7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
+MESES_INV   = {v: k for k, v in MESES_NOMES.items()}
+
+# ─────────────────────────────────────────────────────────────
+# CONFIGURAÇÃO DA PÁGINA
+# ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Despesas de Viagens - FIRSTLAB",
-    page_icon="✈️",
+    page_title="Faturamento x Despesa Realizada",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# ── Cores FIRSTLAB ────────────────────────────
-AZUL_ESCURO  = "#0A1F3D"
-AZUL_MEDIO   = "#1A3A6B"
-LARANJA      = "#F07D00"
-CINZA_CLARO  = "#F4F6FA"
-BRANCO       = "#FFFFFF"
-TEXTO_ESCURO = "#0A1F3D"
-
-st.markdown(f"""
+# ─────────────────────────────────────────────────────────────
+# CSS GLOBAL
+# ─────────────────────────────────────────────────────────────
+st.markdown("""
 <style>
-    .stApp {{ background-color:{CINZA_CLARO}; }}
-    .header-bar {{
-        background:{AZUL_ESCURO}; padding:18px 28px; border-radius:10px;
-        margin-bottom:18px; display:flex; align-items:center; gap:18px;
-    }}
-    .header-titles {{ display:flex; flex-direction:column; justify-content:center; }}
-    .header-bar h1 {{
-        color:white; font-size:1.6rem; font-weight:900;
-        margin:0; letter-spacing:1px; line-height:1.2;
-    }}
-    .header-bar .subtitulo {{
-        color:{LARANJA}; font-size:.8rem; font-weight:600;
-        margin:0 0 2px 0; letter-spacing:2px; text-transform:uppercase;
-    }}
-    .kpi-card {{
-        background:{BRANCO}; border-radius:10px; padding:16px 20px;
-        box-shadow:0 2px 8px rgba(0,0,0,.08);
-        border-left:5px solid {LARANJA}; margin-bottom:8px;
-    }}
-    .kpi-label {{ font-size:.72rem; color:#666; text-transform:uppercase; font-weight:600; margin-bottom:4px; }}
-    .kpi-value {{ font-size:1.25rem; font-weight:800; color:{AZUL_ESCURO}; }}
-    .kpi-sub   {{ font-size:.7rem; color:#999; margin-top:2px; }}
-    .section-title {{
-        font-size:.95rem; font-weight:700; color:{AZUL_ESCURO}; text-transform:uppercase;
-        letter-spacing:.5px; border-bottom:2px solid {LARANJA};
-        padding-bottom:4px; margin-bottom:12px; margin-top:8px;
-    }}
-    .stSelectbox label {{ font-weight:600; color:{AZUL_ESCURO}; font-size:.8rem; }}
-    .stTabs [data-baseweb="tab-list"] {{ gap:8px; }}
-    .stTabs [data-baseweb="tab"] {{
-        background:{BRANCO}; border-radius:8px 8px 0 0;
-        font-weight:700; color:{AZUL_ESCURO}; border:2px solid #dde;
-    }}
-    .stTabs [aria-selected="true"] {{
-        background:{AZUL_ESCURO} !important;
-        color:white !important;
-        border-color:{AZUL_ESCURO} !important;
-    }}
-    footer {{ display:none; }}
-    #MainMenu {{ visibility:hidden; }}
+    .stApp { background-color: #f0f2f6; }
+    #MainMenu, footer, header { visibility: hidden; }
+
+    .header-bar {
+        background: linear-gradient(90deg, #1a2744 0%, #2c3e7a 100%);
+        padding: 16px 28px; border-radius: 12px; margin-bottom: 20px;
+        display: flex; align-items: center; gap: 14px;
+    }
+    .header-title {
+        color: white; font-size: 1.6rem; font-weight: 800;
+        letter-spacing: 1px; margin: 0;
+    }
+    .header-logo {
+        background: #e95d0c; border-radius: 50%;
+        width: 48px; height: 48px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.4rem; flex-shrink: 0;
+    }
+    .header-badge {
+        margin-left: auto; background: rgba(255,255,255,0.15);
+        color: #a0b4d8; font-size: 0.7rem; padding: 4px 12px;
+        border-radius: 20px; border: 1px solid rgba(255,255,255,0.2);
+        white-space: nowrap;
+    }
+    .kpi-card {
+        background: white; border-radius: 10px;
+        padding: 16px 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+        border-top: 4px solid #1a2744; height: 100%;
+    }
+    .kpi-card.laranja { border-top-color: #e95d0c; }
+    .kpi-card.verde   { border-top-color: #27ae60; }
+    .kpi-card.azul    { border-top-color: #2980b9; }
+    .kpi-card.vermelho{ border-top-color: #c0392b; }
+    .kpi-label { font-size: 0.7rem; color: #888; font-weight: 700;
+                 text-transform: uppercase; letter-spacing: 0.6px; }
+    .kpi-value { font-size: 1.45rem; font-weight: 800; color: #1a2744; margin-top: 6px; }
+    .kpi-sub   { font-size: 0.72rem; color: #aaa; margin-top: 3px; }
+    .sec-title {
+        font-size: 0.85rem; font-weight: 800; color: #1a2744;
+        text-transform: uppercase; letter-spacing: 0.8px;
+        border-left: 4px solid #e95d0c; padding-left: 10px;
+        margin: 20px 0 14px 0;
+    }
+    .info-corte {
+        background: #e8f4fd; border: 1px solid #aed6f1;
+        border-radius: 8px; padding: 8px 16px;
+        font-size: 0.8rem; color: #1a5276; margin-bottom: 12px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Utilitários ───────────────────────────────
-def fmt_brl(v):
-    if pd.isna(v) or v == 0: return "R$ 0,00"
+
+# ─────────────────────────────────────────────────────────────
+# UTILITÁRIOS
+# ─────────────────────────────────────────────────────────────
+def fmt_brl(valor):
+    if pd.isna(valor) or valor is None:
+        return "R$ 0,00"
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def fmt_pct(valor):
+    if pd.isna(valor):
+        return "0,0%"
+    return f"{valor:.1f}%".replace(".", ",")
+
+
+def get_file_mtime():
     try:
-        i, d = f"{abs(v):,.2f}".split(".")
-        return f"{'-' if v<0 else ''}R$ {i.replace(',','.')},{d}"
-    except: return f"R$ {v:.2f}"
-
-def fmt_pct(v):
-    return "0,0%" if pd.isna(v) else f"{v:.1f}%".replace(".",",")
-
-def kpi(col, label, valor, sub=""):
-    col.markdown(f"""<div class="kpi-card">
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value">{valor}</div>
-        <div class="kpi-sub">{sub}</div>
-    </div>""", unsafe_allow_html=True)
-
-def limpar_cc(v):
-    if pd.isna(v): return v
-    return re.sub(r'^[A-Za-z]{2}\d{2}\s*[-–]\s*', '', str(v)).strip()
-
-def bar_h(df, x, y, title, key, cor=None, height=440):
-    fig = px.bar(df, x=x, y=y, orientation="h",
-                 text=df[x].apply(fmt_brl),
-                 color_discrete_sequence=[cor or AZUL_MEDIO],
-                 title=f"<b>{title}</b>")
-    fig.update_traces(textposition="outside", textfont_size=11,
-                      textfont_color=TEXTO_ESCURO)
-    fig.update_layout(height=height, margin=dict(l=200,r=130,t=45,b=10),
-                      xaxis_title="", yaxis_title="",
-                      plot_bgcolor=BRANCO, paper_bgcolor=BRANCO,
-                      title_font=dict(size=13, color=AZUL_ESCURO),
-                      font=dict(color=AZUL_ESCURO, size=11),
-                      yaxis=dict(tickfont=dict(size=11, color=AZUL_ESCURO),
-                                 automargin=False))
-    fig.update_xaxes(showticklabels=False, showgrid=False, range=[0, df[x].max()*1.35])
-    st.plotly_chart(fig, use_container_width=True, key=key)
-
-def graf_barras_mes(df_real, df_orc_m, title, key):
-    fig = go.Figure()
-    if not df_orc_m.empty:
-        fig.add_trace(go.Bar(name="Orçamento", x=df_orc_m["mes_ano"],
-                             y=df_orc_m["orcamento"], marker_color=LARANJA,
-                             text=[fmt_brl(v) for v in df_orc_m["orcamento"]],
-                             textposition="outside", textfont=dict(size=11, color=TEXTO_ESCURO)))
-    fig.add_trace(go.Bar(name="Realizado", x=df_real["mes_ano"],
-                         y=df_real["valor"], marker_color=AZUL_MEDIO,
-                         text=[fmt_brl(v) for v in df_real["valor"]],
-                         textposition="outside", textfont=dict(size=11, color=TEXTO_ESCURO)))
-    fig.update_layout(barmode="group", title=f"<b>{title}</b>",
-                      height=440, plot_bgcolor=BRANCO, paper_bgcolor=BRANCO,
-                      title_font=dict(size=14, color=AZUL_ESCURO),
-                      font=dict(color=TEXTO_ESCURO, size=12),
-                      legend=dict(orientation="h", y=1.1, font=dict(size=12)),
-                      margin=dict(l=60,r=20,t=60,b=60),
-                      xaxis=dict(tickangle=-35, tickfont=dict(size=11)),
-                      yaxis=dict(tickformat=",.0f", showgrid=True, gridcolor="#eee",
-                                 tickfont=dict(size=11)))
-    st.plotly_chart(fig, use_container_width=True, key=key)
-
-def graf_acumulado(df_real, title, key):
-    df = df_real.copy().sort_values("mes_ano_sort")
-    df["acumulado"] = df["valor"].cumsum()
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["mes_ano"], y=df["acumulado"],
-                             mode="lines+markers+text",
-                             line=dict(color=AZUL_MEDIO, width=3),
-                             marker=dict(size=9, color=LARANJA),
-                             text=[fmt_brl(v) for v in df["acumulado"]],
-                             textposition="top center", textfont=dict(size=11, color=TEXTO_ESCURO),
-                             fill="tozeroy", fillcolor="rgba(26,58,107,0.1)"))
-    fig.update_layout(title=f"<b>{title}</b>",
-                      height=440, plot_bgcolor=BRANCO, paper_bgcolor=BRANCO,
-                      title_font=dict(size=14, color=AZUL_ESCURO),
-                      font=dict(color=TEXTO_ESCURO, size=12),
-                      margin=dict(l=60,r=20,t=60,b=60),
-                      xaxis=dict(tickangle=-35, tickfont=dict(size=11)),
-                      yaxis=dict(tickformat=",.0f", showgrid=True, gridcolor="#eee",
-                                 tickfont=dict(size=11)))
-    st.plotly_chart(fig, use_container_width=True, key=key)
-
-# ── Logo ──────────────────────────────────────
-def logo_html():
-    base = os.path.dirname(os.path.abspath(__file__)) if os.path.isabs(__file__) else os.getcwd()
-    for p in ["logo.png", os.path.join(base, "logo.png"), os.path.join(os.getcwd(), "logo.png")]:
-        if os.path.exists(p):
-            data = base64.b64encode(open(p, "rb").read()).decode()
-            return '<img src="data:image/png;base64,' + data + '" style="height:52px; object-fit:contain;">'
-    return "<span style='font-size:1.5rem;font-weight:900;letter-spacing:1px;'><span style='color:#F07D00'>FIRST</span><span style='color:white'>LAB</span></span>"
+        return os.path.getmtime(CAMINHO_EXCEL)
+    except Exception:
+        return 0
 
 
-# ── Carregamento ──────────────────────────────
-@st.cache_data(show_spinner="Carregando dados...")
-def carregar(caminho):
-    xl   = pd.ExcelFile(caminho)
-    abas = xl.sheet_names
+# ─────────────────────────────────────────────────────────────
+# AUTO-RELOAD
+# ─────────────────────────────────────────────────────────────
+if "last_mtime" not in st.session_state:
+    st.session_state.last_mtime = get_file_mtime()
 
-    # De/Para tipo despesa
-    depara = {}
-    aba = next((a for a in abas if "tipodespesa" in a.lower().replace(" ","")), None)
-    if aba:
-        d = pd.read_excel(caminho, sheet_name=aba)
-        depara = dict(zip(d.iloc[:,0].astype(str).str.strip().str.upper(),
-                          d.iloc[:,1].astype(str).str.strip().str.upper()))
+current_mtime = get_file_mtime()
+if current_mtime != st.session_state.last_mtime:
+    st.session_state.last_mtime = current_mtime
+    st.cache_data.clear()
+    st.rerun()
 
-    # Despesas
-    aba = next((a for a in abas if "relatorio" in a.lower() or "viagem" in a.lower()), None)
-    df_d = pd.DataFrame()
-    if aba:
-        df = pd.read_excel(caminho, sheet_name=aba)
-        df.columns = [c.strip() for c in df.columns]
-        cm = {
-            "data":        next((c for c in df.columns if c.startswith("DT_")), None),
-            "viagem":      next((c for c in df.columns if "NR_VIAGEM" in c), None),
-            "colaborador": next((c for c in df.columns if "NM_RAZAOSOC" in c), None),
-            "cc_desc":     next((c for c in df.columns if "DS_CENTROCUSTO" in c), None),
-            "tipo_orig":   next((c for c in df.columns if "DS_TIPO_DESP" in c), None),
-            "valor":       next((c for c in df.columns if "VR_DESPESA" in c), None),
-        }
-        df = df.rename(columns={v:k for k,v in cm.items() if v})
-        if "data" in df.columns:
-            df["data"]         = pd.to_datetime(df["data"], errors="coerce")
-            df["ano"]          = df["data"].dt.year
-            df["mes"]          = df["data"].dt.month
-            df["mes_ano"]      = df["data"].dt.strftime("%m/%Y")
-            df["mes_ano_sort"] = df["data"].dt.to_period("M").astype(str)
-        if "valor"    in df.columns: df["valor"]    = pd.to_numeric(df["valor"], errors="coerce").fillna(0)
-        if "tipo_orig" in df.columns:
-            df["tipo_desc"] = (df["tipo_orig"].astype(str).str.strip().str.upper()
-                               .map(depara).fillna(df["tipo_orig"].astype(str).str.strip().str.upper()))
+
+# ─────────────────────────────────────────────────────────────
+# CARREGAMENTO E TRATAMENTO DOS DADOS
+# ─────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner="⏳ Carregando dados...")
+def load_data(mtime: float):
+    """
+    Carrega e trata todos os dados.
+    mtime: força invalidação do cache quando o arquivo muda.
+
+    REGRA DE FATURAMENTO:
+      1. Coluna D somente quando coluna C = 'Considerar'
+      2. Apenas ano 2026
+      3. Corte automático pelo último mês COMPLETO de despesas
+         (mês incompleto = menos de 60% da média dos meses anteriores)
+    """
+    if not CAMINHO_EXCEL.exists():
+        return None, None, None, None, None, False, f"Arquivo não encontrado: {CAMINHO_EXCEL}"
+
+    try:
+        xl = pd.ExcelFile(CAMINHO_EXCEL)
+    except Exception as e:
+        return None, None, None, None, None, False, str(e)
+
+    # ── 1. Despesas ───────────────────────────────────────────
+    try:
+        df_desp = pd.read_excel(xl, sheet_name="VW_RelatorioViagensDesoesasCola")
+        df_desp.columns = [c.strip() for c in df_desp.columns]
+        df_desp.rename(columns={
+            "DT_DESPESA":          "data",
+            "NR_VIAGEM":           "nr_viagem",
+            "CD_ENTIDADE_FUNC":    "cod_colaborador",
+            "NM_RAZAOSOC":         "colaborador",
+            "DS_CENTROCUSTO":      "centro_custo",
+            "DS_TIPO_DESP_VIAGEM": "tipo_despesa",
+            "VR_DESPESA":          "valor_despesa",
+            "FG_SITUACAO":         "situacao",
+        }, inplace=True)
+        df_desp["data"]          = pd.to_datetime(df_desp["data"], errors="coerce")
+        df_desp["valor_despesa"] = pd.to_numeric(df_desp.get("valor_despesa", 0), errors="coerce").fillna(0)
+        df_desp["ano"]           = df_desp["data"].dt.year
+        df_desp["mes"]           = df_desp["data"].dt.month
+        df_desp["mes_ano"]       = df_desp["data"].dt.to_period("M").astype(str)
+        # Somente 2026
+        df_desp = df_desp[df_desp["ano"] == ANO_DASHBOARD].copy()
+    except Exception as e:
+        return None, None, None, None, None, False, f"Erro aba VW_Relatorio: {e}"
+
+    # ── 2. Colaborador → canal ────────────────────────────────
+    try:
+        df_colab = pd.read_excel(xl, sheet_name="dimColaborador")
+        df_colab.columns = [c.strip() for c in df_colab.columns]
+        df_colab.rename(columns={
+            "Cód. Colaborador": "cod_colaborador",
+            "CANAL":            "canal",
+            "SUB-REGIÃO":       "sub_regiao_colab",
+        }, inplace=True)
+        df_colab = df_colab[["cod_colaborador", "canal", "sub_regiao_colab"]].drop_duplicates()
+        df_desp  = df_desp.merge(df_colab, on="cod_colaborador", how="left")
+    except Exception:
+        df_desp["canal"]          = "N/I"
+        df_desp["sub_regiao_colab"] = "N/I"
+
+    # ── 3. Corte automático de meses ──────────────────────────
+    #  Último mês com < 60% da média dos anteriores = incompleto
+    try:
+        contagem = df_desp.groupby("mes")["valor_despesa"].count()
+        meses    = sorted(contagem.index.tolist())
+        if len(meses) >= 2:
+            media_ant        = contagem.iloc[:-1].mean()
+            ultimo_mes       = meses[-1]
+            incompleto       = contagem[ultimo_mes] < media_ant * 0.60
+            mes_corte        = meses[-2] if incompleto else ultimo_mes
+            mes_incompleto   = incompleto
         else:
-            df["tipo_desc"] = "SEM TIPO"
-        if "cc_desc" in df.columns:
-            df["cc_desc"] = df["cc_desc"].apply(limpar_cc)
+            mes_corte      = meses[-1] if meses else 12
+            mes_incompleto = False
+    except Exception:
+        mes_corte      = 3
+        mes_incompleto = False
 
-        # Canal
-        aba_c = next((a for a in abas if "colaborador" in a.lower()), None)
-        if aba_c:
-            dc = pd.read_excel(caminho, sheet_name=aba_c)
-            dc.columns = [c.strip() for c in dc.columns]
-            cn = next((c for c in dc.columns if "colaborador" in c.lower()), None)
-            cc = next((c for c in dc.columns if "canal" in c.lower()), None)
-            if cn and cc:
-                dc = dc.rename(columns={cn:"colaborador", cc:"canal"})
-                df = df.merge(dc[["colaborador","canal"]].drop_duplicates("colaborador"),
-                              on="colaborador", how="left")
-        df_d = df
+    # Aplica corte nas despesas
+    df_desp = df_desp[df_desp["mes"] <= mes_corte].copy()
 
-    # Orçamento
-    aba = next((a for a in abas if "fato" in a.lower() and "or" in a.lower()), None) or \
-          next((a for a in abas if "orc" in a.lower() or "orç" in a.lower()), None)
-    df_o = pd.DataFrame()
-    if aba:
-        d = pd.read_excel(caminho, sheet_name=aba)
-        d.columns = [c.strip() for c in d.columns]
-        cm = {
-            "ano":       next((c for c in d.columns if c.lower()=="ano"), None),
-            "mes":       next((c for c in d.columns if c.lower() in ("mês","mes")), None),
-            "tipo_desc": next((c for c in d.columns if "tipo" in c.lower()), None),
-            "orcamento": next((c for c in d.columns if "plan" in c.lower() or "vl_" in c.lower()), None),
-            "cc_desc":   next((c for c in d.columns if "custo" in c.lower()), None),
-        }
-        d = d.rename(columns={v:k for k,v in cm.items() if v})
-        if "orcamento" in d.columns: d["orcamento"] = pd.to_numeric(d["orcamento"], errors="coerce").fillna(0)
-        if "ano" in d.columns and "mes" in d.columns:
-            d["mes_ano"]      = d.apply(lambda r: f"{int(r['mes']):02d}/{int(r['ano'])}", axis=1)
-            d["mes_ano_sort"] = d.apply(lambda r: f"{int(r['ano'])}-{int(r['mes']):02d}", axis=1)
-        if "cc_desc" in d.columns: d["cc_desc"] = d["cc_desc"].apply(limpar_cc)
-        df_o = d
+    # ── 4. Orçamento ──────────────────────────────────────────
+    try:
+        df_orc = pd.read_excel(xl, sheet_name="FatoOrçamento")
+        df_orc.columns = [c.strip() for c in df_orc.columns]
+        df_orc.rename(columns={
+            "Ano":          "ano",
+            "Mês":          "mes",
+            "Vl_Planejado": "valor_orcado",
+        }, inplace=True)
+        df_orc["valor_orcado"] = pd.to_numeric(df_orc["valor_orcado"], errors="coerce").fillna(0)
+        df_orc["mes_ano"]      = pd.to_datetime(
+            df_orc["ano"].astype(str) + "-" + df_orc["mes"].astype(str).str.zfill(2) + "-01"
+        ).dt.to_period("M").astype(str)
+        df_orc = df_orc[
+            (df_orc["ano"] == ANO_DASHBOARD) & (df_orc["mes"] <= mes_corte)
+        ].copy()
+    except Exception:
+        df_orc = pd.DataFrame(columns=["ano", "mes", "mes_ano", "valor_orcado"])
 
-    # Faturamento
-    aba = next((a for a in abas if "faturamento" in a.lower()), None)
-    df_f = pd.DataFrame()
-    if aba:
-        d = pd.read_excel(caminho, sheet_name=aba)
-        d.columns = [c.strip() for c in d.columns]
-        cm = {
-            "data":        next((c for c in d.columns if "data" in c.lower() or "emiss" in c.lower()), None),
-            "sub_regiao":  next((c for c in d.columns if "sub" in c.lower() or "canal" in c.lower()), None),
-            "considerar":  next((c for c in d.columns if "consid" in c.lower()), None),
-            "faturamento": next((c for c in d.columns if "valor" in c.lower() or "liquid" in c.lower()), None),
-        }
-        d = d.rename(columns={v:k for k,v in cm.items() if v})
-        if "data" in d.columns:
-            d["data"]         = pd.to_datetime(d["data"], errors="coerce")
-            d["ano"]          = d["data"].dt.year
-            d["mes"]          = d["data"].dt.month
-            d["mes_ano"]      = d["data"].dt.strftime("%m/%Y")
-            d["mes_ano_sort"] = d["data"].dt.to_period("M").astype(str)
-        if "faturamento" in d.columns: d["faturamento"] = pd.to_numeric(d["faturamento"], errors="coerce").fillna(0)
-        if "considerar" in d.columns:
-            d = d[d["considerar"].astype(str).str.strip().str.lower()=="considerar"]
-        df_f = d
+    # ── 5. Faturamento ────────────────────────────────────────
+    #   REGRA: coluna D somente quando coluna C = "Considerar"
+    #          ano 2026, meses 1 até mes_corte
+    try:
+        df_fat = pd.read_excel(xl, sheet_name="Faturamento")
+        df_fat.columns = ["data", "sub_regiao", "considerar", "valor_faturamento"]
+        df_fat["data"]              = pd.to_datetime(df_fat["data"], errors="coerce")
+        df_fat["valor_faturamento"] = pd.to_numeric(df_fat["valor_faturamento"], errors="coerce").fillna(0)
 
-    return df_d, df_o, df_f
+        # FILTRO PRINCIPAL: somente "Considerar"
+        df_fat = df_fat[df_fat["considerar"] == "Considerar"].copy()
 
-def graf_acumulado_comparativo(df_d, df_o, key):
-    """Gráfico de linha: acumulado realizado x acumulado orçado por mês."""
-    if "mes_ano" not in df_d.columns or "valor" not in df_d.columns:
-        st.info("Dados insuficientes para o gráfico acumulado.")
-        return
+        df_fat["ano"]     = df_fat["data"].dt.year
+        df_fat["mes"]     = df_fat["data"].dt.month
+        df_fat["mes_ano"] = df_fat["data"].dt.to_period("M").astype(str)
 
-    # Realizado acumulado
-    real = (df_d.groupby(["mes_ano_sort","mes_ano"])["valor"].sum()
-                .reset_index().sort_values("mes_ano_sort"))
-    real["acum_real"] = real["valor"].cumsum()
+        # Filtro: 2026 + até mes_corte
+        df_fat = df_fat[
+            (df_fat["ano"] == ANO_DASHBOARD) &
+            (df_fat["mes"] <= mes_corte)
+        ].copy()
 
-    # Orçado acumulado
-    orc_ac = pd.DataFrame()
-    if "mes_ano" in df_o.columns and "orcamento" in df_o.columns:
-        orc_ac = (df_o.groupby(["mes_ano_sort","mes_ano"])["orcamento"].sum()
-                      .reset_index().sort_values("mes_ano_sort"))
-        orc_ac["acum_orc"] = orc_ac["orcamento"].cumsum()
+        # Canal por sub-região
+        def sub_to_canal(s):
+            if pd.isna(s): return "OUTROS"
+            s = str(s).upper()
+            if "GC" in s or "GRANDE" in s:     return "GRANDES CONTAS"
+            if "DR" in s or "PRIME" in s:       return "DISTRIBUIDOR"
+            if "CF" in s or "PEQUENO" in s:     return "CF - PEQUENO PORTE"
+            if "OP" in s or "OPERADORA" in s:   return "OPERADORAS DE SAÚDE"
+            if "LPC" in s:                      return "LPC"
+            return s
 
-    # Unir pelos meses que existem no realizado
-    if not orc_ac.empty:
-        merged = real.merge(orc_ac[["mes_ano_sort","mes_ano","acum_orc"]],
-                            on=["mes_ano_sort","mes_ano"], how="left").fillna(0)
-    else:
-        merged = real.copy()
-        merged["acum_orc"] = 0
+        df_fat["canal"] = df_fat["sub_regiao"].apply(sub_to_canal)
+    except Exception as e:
+        df_fat         = pd.DataFrame(columns=["data","sub_regiao","canal",
+                                                "valor_faturamento","ano","mes","mes_ano"])
+        mes_incompleto = False
 
-    merged = merged.sort_values("mes_ano_sort")
-
-    fig = go.Figure()
-
-    # Linha Orçado
-    if not orc_ac.empty:
-        fig.add_trace(go.Scatter(
-            x=merged["mes_ano"], y=merged["acum_orc"],
-            mode="lines+markers+text",
-            name="Orçado Acumulado",
-            line=dict(color=LARANJA, width=3, dash="dot"),
-            marker=dict(size=9, color=LARANJA, symbol="diamond"),
-            text=[fmt_brl(v) for v in merged["acum_orc"]],
-            textposition="bottom center",
-            textfont=dict(size=10, color=LARANJA),
-        ))
-
-    # Linha Realizado
-    fig.add_trace(go.Scatter(
-        x=merged["mes_ano"], y=merged["acum_real"],
-        mode="lines+markers+text",
-        name="Realizado Acumulado",
-        line=dict(color=AZUL_MEDIO, width=3),
-        marker=dict(size=9, color=AZUL_MEDIO),
-        text=[fmt_brl(v) for v in merged["acum_real"]],
-        textposition="top center",
-        textfont=dict(size=10, color=AZUL_ESCURO),
-        fill="tozeroy",
-        fillcolor="rgba(26,58,107,0.08)",
-    ))
-
-    # Diferença (% utilizado no acumulado)
-    ultimo = merged.iloc[-1]
-    pct = (ultimo["acum_real"] / ultimo["acum_orc"] * 100) if ultimo.get("acum_orc", 0) > 0 else 0
-    diff = ultimo["acum_real"] - ultimo.get("acum_orc", 0)
-    cor_diff = "#E74C3C" if diff > 0 else "#27AE60"
-    sinal = "acima" if diff > 0 else "abaixo"
-
-    fig.update_layout(
-        title=f"<b>Acumulado: Realizado x Orçado</b>  "
-              f"<span style='font-size:13px; color:{cor_diff}'>"
-              f"{fmt_pct(pct)} utilizado | {fmt_brl(abs(diff))} {sinal} do orçado</span>",
-        height=460,
-        plot_bgcolor=BRANCO,
-        paper_bgcolor=BRANCO,
-        title_font=dict(size=14, color=AZUL_ESCURO),
-        font=dict(color=AZUL_ESCURO, size=12),
-        legend=dict(orientation="h", y=1.08, font=dict(size=12)),
-        margin=dict(l=70, r=30, t=80, b=60),
-        xaxis=dict(tickangle=-35, tickfont=dict(size=11), showgrid=False),
-        yaxis=dict(tickformat=",.0f", showgrid=True, gridcolor="#eee",
-                   tickfont=dict(size=11), zeroline=False),
-        hovermode="x unified",
-    )
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    corte_label = f"{MESES_NOMES.get(mes_corte, str(mes_corte))}/{ANO_DASHBOARD}"
+    return df_desp, df_orc, df_fat, mes_corte, corte_label, mes_incompleto, None
 
 
-# ── Localizar arquivo ─────────────────────────
-arq = next((p for p in ["Base.2.xlsx","Base_2.xlsx",
-                         os.path.join(os.path.dirname(__file__),"Base.2.xlsx"),
-                         os.path.join(os.path.dirname(__file__),"Base_2.xlsx")]
-            if os.path.exists(p)), None)
-if not arq:
-    st.error("Arquivo Base.2.xlsx não encontrado na pasta do app.py.")
-    st.stop()
+# ─────────────────────────────────────────────────────────────
+# CARREGA OS DADOS
+# ─────────────────────────────────────────────────────────────
+df_desp, df_orc, df_fat, mes_corte, corte_label, mes_incompleto, erro = load_data(
+    st.session_state.last_mtime
+)
 
-df_desp, df_orc, df_fat = carregar(arq)
+# ─────────────────────────────────────────────────────────────
+# HEADER
+# ─────────────────────────────────────────────────────────────
+ultima_mod = ""
+try:
+    ts = os.path.getmtime(CAMINHO_EXCEL)
+    ultima_mod = time.strftime("%d/%m/%Y %H:%M", time.localtime(ts))
+except Exception:
+    pass
 
-# Filtrar apenas 2026
-if "ano" in df_desp.columns:
-    df_desp = df_desp[df_desp["ano"] == 2026]
-if "ano" in df_orc.columns:
-    df_orc = df_orc[df_orc["ano"] == 2026]
-if "ano" in df_fat.columns:
-    df_fat = df_fat[df_fat["ano"] == 2026]
-
-# ── Header ────────────────────────────────────
 st.markdown(f"""
 <div class="header-bar">
-    {logo_html()}
-    <div class="header-titles">
-        <h1>DESPESAS DE VIAGENS</h1>
+    <div class="header-logo">🔬</div>
+    <div class="header-title">FATURAMENTO X DESPESA REALIZADA — {ANO_DASHBOARD}</div>
+    <div class="header-badge">
+        🔄 Auto-reload ativo &nbsp;|&nbsp;
+        Dados até: <b>{corte_label if not erro else "—"}</b> &nbsp;|&nbsp;
+        Arquivo: {ultima_mod}
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ── Filtros compartilhados ────────────────────
-def opcoes(df, col):
-    return sorted(df[col].dropna().unique().tolist()) if col in df.columns else []
+if erro:
+    st.error(f"❌ {erro}")
+    st.info(f"📁 Caminho esperado: `{CAMINHO_EXCEL}`")
+    st.stop()
 
-tipos_op  = opcoes(df_desp, "tipo_desc")
-colabs_op = opcoes(df_desp, "colaborador")
-canais_op = opcoes(df_desp, "canal")
-ccs_op    = opcoes(df_desp, "cc_desc")
-meses_op  = (df_desp[["mes_ano","mes_ano_sort"]].dropna()
-             .drop_duplicates().sort_values("mes_ano_sort")["mes_ano"].tolist()
-             if "mes_ano" in df_desp.columns else [])
+# Aviso mês incompleto
+if mes_incompleto:
+    prox = mes_corte + 1
+    MESES_FULL = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
+                  7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
+    st.markdown(f"""
+    <div class="info-corte">
+        ℹ️ <b>{MESES_FULL.get(prox, str(prox))}</b> ainda não fechou —
+        dashboard exibindo dados até <b>{corte_label}</b>.
+        Quando o mês fechar e a planilha for atualizada, os dados serão incluídos automaticamente.
+    </div>
+    """, unsafe_allow_html=True)
 
-def filtrar(df_d, df_o, df_f, tipo, colab, mano, canal, cc):
-    d,o,f = df_d.copy(), df_o.copy(), df_f.copy()
-    if tipo  != "Todos" and "tipo_desc"   in d.columns: d = d[d["tipo_desc"]   == tipo]
-    if colab != "Todos" and "colaborador" in d.columns: d = d[d["colaborador"] == colab]
-    if canal != "Todos" and "canal"       in d.columns: d = d[d["canal"]       == canal]
-    if cc    != "Todos" and "cc_desc"     in d.columns: d = d[d["cc_desc"]     == cc]
-    if mano  != "Todos":
-        if "mes_ano" in d.columns: d = d[d["mes_ano"] == mano]
-        if "mes_ano" in o.columns: o = o[o["mes_ano"] == mano]
-        if "mes_ano" in f.columns: f = f[f["mes_ano"] == mano]
-    return d, o, f
+# ─────────────────────────────────────────────────────────────
+# NAVEGAÇÃO
+# ─────────────────────────────────────────────────────────────
+if "pagina" not in st.session_state:
+    st.session_state.pagina = "faturamento"
 
-# ══════════════════════════════════════════════
-# FUNÇÃO BLOCO DE CONTEÚDO (reutilizada nas 2 abas)
-# ══════════════════════════════════════════════
-def renderizar(df_d, df_o, df_f, sufixo):
+col_nav1, col_nav2, col_nav3 = st.columns([2, 2, 8])
+with col_nav1:
+    if st.button("📋 Painel de Despesas", use_container_width=True,
+                 type="primary" if st.session_state.pagina == "despesas" else "secondary"):
+        st.session_state.pagina = "despesas"
+        st.rerun()
+with col_nav2:
+    if st.button("📈 Faturamento x Despesa", use_container_width=True,
+                 type="primary" if st.session_state.pagina == "faturamento" else "secondary"):
+        st.session_state.pagina = "faturamento"
+        st.rerun()
 
-    # ── KPIs ──────────────────────────────────
-    tot_desp  = df_d["valor"].sum()       if "valor"       in df_d.columns else 0
-    tot_orc   = df_o["orcamento"].sum()   if "orcamento"   in df_o.columns else 0
-    tot_fat   = df_f["faturamento"].sum() if "faturamento" in df_f.columns else 0
-    pct_real  = (tot_desp / tot_orc  * 100) if tot_orc  > 0 else 0
-    pct_desp_fat = (tot_desp / tot_fat * 100) if tot_fat > 0 else 0
-    n_col     = df_d["colaborador"].nunique() if "colaborador" in df_d.columns else 1
-    media_col = tot_desp / n_col if n_col > 0 else 0
-    n_viag    = df_d["viagem"].nunique() if "viagem" in df_d.columns else 0
+st.markdown("---")
 
-    st.markdown('<div class="section-title">Indicadores</div>', unsafe_allow_html=True)
-    c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
-    kpi(c1, "Orçamento",           fmt_brl(tot_orc))
-    kpi(c2, "Despesa Realizada",   fmt_brl(tot_desp))
-    kpi(c3, "% Realizado",         fmt_pct(pct_real),     f"de {fmt_brl(tot_orc)}")
-    kpi(c4, "Média / Colaborador", fmt_brl(media_col),    f"{n_col} colaboradores")
-    kpi(c5, "Faturamento",         fmt_brl(tot_fat))
-    kpi(c6, "Despesa / Fat.",      fmt_pct(pct_desp_fat))
-    kpi(c7, "Nº Viagens",          f"{n_viag:,}".replace(",","."))
+# ─────────────────────────────────────────────────────────────
+# FILTROS
+# ─────────────────────────────────────────────────────────────
+st.markdown('<div class="sec-title">Filtros</div>', unsafe_allow_html=True)
+fc1, fc2, fc3, fc4 = st.columns(4)
 
-    st.markdown("---")
+meses_disp  = sorted(df_desp["mes"].dropna().unique().astype(int).tolist())
+meses_opts  = ["Todos"] + [f"{MESES_NOMES[m]}/{ANO_DASHBOARD}" for m in meses_disp]
+tipos_disp  = ["Todos"] + sorted(df_desp["tipo_despesa"].dropna().unique().tolist())
+colabs_disp = ["Todos"] + sorted(df_desp["colaborador"].dropna().unique().tolist())
+canais_disp = ["Todos"] + sorted(df_desp["canal"].dropna().unique().tolist())
 
-    # ── Gráficos despesa ──────────────────────
-    st.markdown('<div class="section-title">Despesas de Viagem</div>', unsafe_allow_html=True)
-    g1,g2,g3 = st.columns(3)
+with fc1: f_mes   = st.selectbox("📅 Mês",             meses_opts)
+with fc2: f_tipo  = st.selectbox("📂 Tipo de Despesa", tipos_disp)
+with fc3: f_colab = st.selectbox("👤 Colaborador",     colabs_disp)
+with fc4: f_canal = st.selectbox("📡 Canal",           canais_disp)
 
-    with g1:
-        if "tipo_desc" in df_d.columns and "valor" in df_d.columns:
-            dt = df_d.groupby("tipo_desc")["valor"].sum().reset_index().sort_values("valor",ascending=True).tail(12)
-            bar_h(dt,"valor","tipo_desc","Despesa por Tipo", key=f"tipo_{sufixo}")
 
-    with g2:
-        if "colaborador" in df_d.columns and "valor" in df_d.columns:
-            dc = df_d.groupby("colaborador")["valor"].sum().reset_index().sort_values("valor",ascending=True).tail(12)
-            dc["label"] = dc["colaborador"].str[:25]+"..."
-            fig = px.bar(dc,x="valor",y="label",orientation="h",
-                         text=dc["valor"].apply(fmt_brl),
-                         color_discrete_sequence=[AZUL_MEDIO],
-                         title="<b>Despesa por Colaborador</b>")
-            fig.update_traces(textposition="outside", textfont_size=11,
-                              textfont_color=TEXTO_ESCURO)
-            fig.update_layout(height=440, margin=dict(l=200,r=130,t=45,b=10),
-                              xaxis_title="", yaxis_title="",
-                              plot_bgcolor=BRANCO, paper_bgcolor=BRANCO,
-                              title_font=dict(size=13, color=AZUL_ESCURO),
-                              font=dict(color=AZUL_ESCURO, size=11),
-                              yaxis=dict(tickfont=dict(size=11, color=AZUL_ESCURO),
-                                         automargin=False))
-            fig.update_xaxes(showticklabels=False, showgrid=False,
-                             range=[0, dc["valor"].max()*1.35])
-            st.plotly_chart(fig, use_container_width=True, key=f"colab_{sufixo}")
+def mes_from_label(label):
+    """Converte 'Mar/2026' → 3"""
+    if label == "Todos":
+        return None
+    return MESES_INV.get(label.split("/")[0], None)
 
-    with g3:
-        if "canal" in df_d.columns and "valor" in df_d.columns:
-            dca = df_d.groupby("canal")["valor"].sum().reset_index().sort_values("valor",ascending=True)
-            bar_h(dca,"valor","canal","Despesa por Canal", key=f"canal_{sufixo}")
 
-    st.markdown("---")
+def filtrar_desp(df):
+    d = df.copy()
+    m = mes_from_label(f_mes)
+    if m:
+        d = d[d["mes"] == m]
+    if f_tipo != "Todos":
+        d = d[d["tipo_despesa"] == f_tipo]
+    if f_colab != "Todos":
+        d = d[d["colaborador"] == f_colab]
+    if f_canal != "Todos" and "canal" in d.columns:
+        d = d[d["canal"] == f_canal]
+    return d
 
-    # ── Orçamento x Realizado | Acumulado ─────
-    st.markdown('<div class="section-title">Orçamento x Realizado — Visão Mensal</div>', unsafe_allow_html=True)
-    m1,m2 = st.columns(2)
 
-    with m1:
-        if "mes_ano" in df_d.columns and "valor" in df_d.columns:
-            real = (df_d.groupby(["mes_ano_sort","mes_ano"])["valor"].sum()
-                        .reset_index().sort_values("mes_ano_sort"))
-            orc_m = pd.DataFrame()
-            if "mes_ano" in df_o.columns and "orcamento" in df_o.columns:
-                orc_m = (df_o.groupby(["mes_ano_sort","mes_ano"])["orcamento"].sum()
-                             .reset_index().sort_values("mes_ano_sort"))
-            graf_barras_mes(real, orc_m, "Orçamento x Realizado por Mês", key=f"orc_mes_{sufixo}")
+def filtrar_fat(df):
+    d = df.copy()
+    m = mes_from_label(f_mes)
+    if m:
+        d = d[d["mes"] == m]
+    if f_canal != "Todos" and "canal" in d.columns:
+        d = d[d["canal"] == f_canal]
+    return d
 
-    with m2:
-        if "mes_ano" in df_d.columns and "valor" in df_d.columns:
-            real2 = (df_d.groupby(["mes_ano_sort","mes_ano"])["valor"].sum()
-                         .reset_index().sort_values("mes_ano_sort"))
-            graf_acumulado(real2, "Despesa Acumulada até a Data", key=f"acum_{sufixo}")
 
-    st.markdown("---")
+def filtrar_orc(df):
+    d = df.copy()
+    m = mes_from_label(f_mes)
+    if m:
+        d = d[d["mes"] == m]
+    return d
 
-    # ── Acumulado Realizado x Orçado ──────────
-    st.markdown('<div class="section-title">Acumulado Realizado x Orçado</div>', unsafe_allow_html=True)
-    graf_acumulado_comparativo(df_d, df_o, key=f"acum_comp_{sufixo}")
 
-    st.markdown("---")
+desp_f = filtrar_desp(df_desp)
+fat_f  = filtrar_fat(df_fat)
+orc_f  = filtrar_orc(df_orc)
 
-    # ── Faturamento por Mês e Canal ───────────
-    st.markdown('<div class="section-title">Faturamento por Mês e Canal</div>', unsafe_allow_html=True)
-    if "faturamento" in df_f.columns and "mes_ano" in df_f.columns:
-        f1,f2 = st.columns(2)
-        with f1:
-            fm = (df_f.groupby(["mes_ano_sort","mes_ano"])["faturamento"].sum()
-                      .reset_index().sort_values("mes_ano_sort"))
-            fig = go.Figure()
-            fig.add_trace(go.Bar(x=fm["mes_ano"],y=fm["faturamento"],
-                                 marker_color=AZUL_MEDIO,
-                                 text=[fmt_brl(v) for v in fm["faturamento"]],
-                                 textposition="outside",textfont=dict(size=11, color=TEXTO_ESCURO)))
-            fig.update_layout(title="<b>Faturamento por Mês</b>",
-                              height=440, plot_bgcolor=BRANCO, paper_bgcolor=BRANCO,
-                              title_font=dict(size=14, color=AZUL_ESCURO),
-                              font=dict(color=TEXTO_ESCURO, size=12),
-                              margin=dict(l=60,r=20,t=60,b=60),
-                              xaxis=dict(tickangle=-35, tickfont=dict(size=11)),
-                              yaxis=dict(tickformat=",.0f", showgrid=True, gridcolor="#eee",
-                                         tickfont=dict(size=11)),
-                              xaxis_title="", yaxis_title="")
-            st.plotly_chart(fig, use_container_width=True, key=f"fat_mes_{sufixo}")
-        with f2:
-            if "sub_regiao" in df_f.columns:
-                fc = (df_f.groupby("sub_regiao")["faturamento"].sum()
-                          .reset_index().sort_values("faturamento",ascending=True).tail(15))
-                fc["label"] = fc["sub_regiao"].str[:30]
-                fig2 = px.bar(fc,x="faturamento",y="label",orientation="h",
-                              text=fc["faturamento"].apply(fmt_brl),
-                              color_discrete_sequence=[LARANJA],
-                              title="<b>Faturamento por Canal</b>")
-                fig2.update_traces(textposition="outside", textfont_size=11,
-                                  textfont_color=TEXTO_ESCURO)
-                fig2.update_layout(height=440, margin=dict(l=230,r=130,t=45,b=10),
-                                   xaxis_title="", yaxis_title="",
-                                   plot_bgcolor=BRANCO, paper_bgcolor=BRANCO,
-                                   title_font=dict(size=13, color=AZUL_ESCURO),
-                                   font=dict(color=AZUL_ESCURO, size=11),
-                                   yaxis=dict(tickfont=dict(size=11, color=AZUL_ESCURO),
-                                              automargin=False))
-                fig2.update_xaxes(showticklabels=False, showgrid=False,
-                                  range=[0, fc["faturamento"].max()*1.35])
-                st.plotly_chart(fig2, use_container_width=True, key=f"fat_canal_{sufixo}")
+# ─────────────────────────────────────────────────────────────
+# KPIs
+# ─────────────────────────────────────────────────────────────
+total_despesa     = desp_f["valor_despesa"].sum()
+total_orcado      = orc_f["valor_orcado"].sum()
+pct_realizado     = (total_despesa / total_orcado * 100) if total_orcado > 0 else 0
+total_faturamento = fat_f["valor_faturamento"].sum()
+n_colaboradores   = desp_f["colaborador"].nunique()
+media_por_colab   = total_despesa / n_colaboradores if n_colaboradores > 0 else 0
+relacao_fat_desp  = total_faturamento / total_despesa if total_despesa > 0 else 0
 
-    st.markdown("---")
 
-    # ── Tabela Canal x Faturamento x Despesa ──
-    st.markdown('<div class="section-title">Faturamento x Despesa Realizada — por Canal</div>',
-                unsafe_allow_html=True)
-    if "canal" in df_d.columns and "valor" in df_d.columns:
-        td = df_d.groupby("canal")["valor"].sum().reset_index().rename(columns={"canal":"Canal","valor":"Despesa"})
-        tf = pd.DataFrame()
-        if "sub_regiao" in df_f.columns and "faturamento" in df_f.columns:
-            tf = df_f.groupby("sub_regiao")["faturamento"].sum().reset_index().rename(
-                    columns={"sub_regiao":"Canal","faturamento":"Faturamento"})
-        tab = td.merge(tf, on="Canal", how="outer").fillna(0) if not tf.empty else td.assign(Faturamento=0)
-        tot = pd.DataFrame({"Canal":["TOTAL"],"Despesa":[tab["Despesa"].sum()],"Faturamento":[tab["Faturamento"].sum()]})
-        tab = pd.concat([tab,tot],ignore_index=True)
-        tab["Despesa"]     = tab["Despesa"].apply(fmt_brl)
-        tab["Faturamento"] = tab["Faturamento"].apply(fmt_brl)
-        st.dataframe(tab, use_container_width=True, hide_index=True)
+# ═══════════════════════════════════════════════════════════
+# PÁGINA 1: PAINEL DE DESPESAS
+# ═══════════════════════════════════════════════════════════
+if st.session_state.pagina == "despesas":
 
-    st.markdown("---")
+    st.markdown('<div class="sec-title">📊 KPIs — Despesas de Viagem</div>', unsafe_allow_html=True)
 
-    # ── Tabela hierárquica ────────────────────
-    st.markdown('<div class="section-title">Detalhamento: Centro de Custo → Colaborador → Tipo → Viagem</div>',
-                unsafe_allow_html=True)
-    cols_h = [c for c in ["cc_desc","colaborador","tipo_desc","viagem"] if c in df_d.columns]
-    if cols_h and "valor" in df_d.columns:
-        dh = df_d.groupby(cols_h)["valor"].sum().reset_index().sort_values("valor",ascending=False)
-        dh["valor_fmt"] = dh["valor"].apply(fmt_brl)
-        rm = {"cc_desc":"Centro de Custo","colaborador":"Colaborador",
-              "tipo_desc":"Tipo de Despesa","viagem":"Nº Viagem","valor_fmt":"Valor"}
-        dh = dh.rename(columns=rm)[[rm[c] for c in cols_h]+["Valor"]]
-        st.dataframe(dh, use_container_width=True, hide_index=True, height=420)
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        st.markdown(f"""<div class="kpi-card">
+            <div class="kpi-label">Orçamento até {corte_label}</div>
+            <div class="kpi-value">{fmt_brl(total_orcado)}</div>
+            <div class="kpi-sub">Valor planejado no período</div>
+        </div>""", unsafe_allow_html=True)
+    with k2:
+        st.markdown(f"""<div class="kpi-card laranja">
+            <div class="kpi-label">Despesa Realizada</div>
+            <div class="kpi-value">{fmt_brl(total_despesa)}</div>
+            <div class="kpi-sub">{n_colaboradores} colaboradores</div>
+        </div>""", unsafe_allow_html=True)
+    with k3:
+        cor = "verde" if pct_realizado <= 100 else "vermelho"
+        st.markdown(f"""<div class="kpi-card {cor}">
+            <div class="kpi-label">% Realizado</div>
+            <div class="kpi-value">{fmt_pct(pct_realizado)}</div>
+            <div class="kpi-sub">Despesa / Orçamento</div>
+        </div>""", unsafe_allow_html=True)
+    with k4:
+        st.markdown(f"""<div class="kpi-card azul">
+            <div class="kpi-label">Média por Colaborador</div>
+            <div class="kpi-value">{fmt_brl(media_por_colab)}</div>
+            <div class="kpi-sub">{n_colaboradores} colaboradores ativos</div>
+        </div>""", unsafe_allow_html=True)
+    with k5:
+        saldo = total_orcado - total_despesa
+        st.markdown(f"""<div class="kpi-card {'verde' if saldo >= 0 else 'vermelho'}">
+            <div class="kpi-label">Saldo Orçamentário</div>
+            <div class="kpi-value">{fmt_brl(saldo)}</div>
+            <div class="kpi-sub">Orçamento − Realizado</div>
+        </div>""", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════
-# ABAS
-# ══════════════════════════════════════════════
-tab1, tab2 = st.tabs(["📊 Faturamento x Despesa Realizada", "🧾 Painel de Despesa"])
+    st.markdown("<br>", unsafe_allow_html=True)
 
-with tab1:
-    c1,c2,c3,c4,c5 = st.columns([2,2,2,2,2])
-    with c1: s_tipo  = st.selectbox("Despesa",         ["Todos"]+tipos_op,  key="s1_tipo")
-    with c2: s_colab = st.selectbox("Colaborador",     ["Todos"]+colabs_op, key="s1_colab")
-    with c3: s_mano  = st.selectbox("Mês/Ano",         ["Todos"]+meses_op,  key="s1_mano")
-    with c4: s_canal = st.selectbox("Canal",           ["Todos"]+canais_op, key="s1_canal")
-    with c5: s_cc    = st.selectbox("Centro de Custo", ["Todos"]+ccs_op,    key="s1_cc")
-    d1,o1,f1 = filtrar(df_desp, df_orc, df_fat, s_tipo, s_colab, s_mano, s_canal, s_cc)
-    renderizar(d1, o1, f1, sufixo="aba1")
+    # ── Gráficos de barras horizontais ────────────────────────
+    st.markdown('<div class="sec-title">🗂 Despesas de Viagem</div>', unsafe_allow_html=True)
+    gcol1, gcol2, gcol3 = st.columns(3)
 
-with tab2:
-    c1,c2,c3,c4,c5 = st.columns([2,2,2,2,2])
-    with c1: p_tipo  = st.selectbox("Despesa",         ["Todos"]+tipos_op,  key="s2_tipo")
-    with c2: p_colab = st.selectbox("Colaborador",     ["Todos"]+colabs_op, key="s2_colab")
-    with c3: p_mano  = st.selectbox("Mês/Ano",         ["Todos"]+meses_op,  key="s2_mano")
-    with c4: p_canal = st.selectbox("Canal",           ["Todos"]+canais_op, key="s2_canal")
-    with c5: p_cc    = st.selectbox("Centro de Custo", ["Todos"]+ccs_op,    key="s2_cc")
-    d2,o2,f2 = filtrar(df_desp, df_orc, df_fat, p_tipo, p_colab, p_mano, p_canal, p_cc)
-    renderizar(d2, o2, f2, sufixo="aba2")
+    def bar_h(df_g, col_cat, col_val, titulo, top_n=10):
+        if df_g.empty:
+            return go.Figure()
+        d = df_g.groupby(col_cat)[col_val].sum().nlargest(top_n).reset_index()
+        d = d.sort_values(col_val, ascending=True)
+        labels = [str(x)[:24]+"..." if len(str(x))>24 else str(x) for x in d[col_cat]]
+        fig = go.Figure(go.Bar(
+            x=d[col_val], y=labels, orientation="h",
+            marker_color="#1a2744",
+            text=[fmt_brl(v) for v in d[col_val]],
+            textposition="outside",
+            textfont=dict(size=10, color="#e95d0c", family="Arial Black"),
+        ))
+        fig.update_layout(
+            title=dict(text=titulo, font=dict(size=12, color="#1a2744"), x=0),
+            height=360, margin=dict(l=0, r=110, t=36, b=10),
+            xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+            yaxis=dict(tickfont=dict(size=10)),
+            paper_bgcolor="white", plot_bgcolor="white",
+        )
+        return fig
 
-st.markdown("""
-<div style="text-align:center;color:#aaa;font-size:.75rem;margin-top:24px;
-            padding:10px;border-top:1px solid #dde;">
-    FIRSTLAB · Despesas de Viagens · Base.2.xlsx
-</div>
-""", unsafe_allow_html=True)
+    with gcol1:
+        st.plotly_chart(bar_h(desp_f, "tipo_despesa", "valor_despesa", "Despesa por Tipo"),
+                        use_container_width=True)
+    with gcol2:
+        st.plotly_chart(bar_h(desp_f, "colaborador", "valor_despesa", "Despesa por Colaborador"),
+                        use_container_width=True)
+    with gcol3:
+        st.plotly_chart(bar_h(desp_f, "canal", "valor_despesa", "Despesa por Canal"),
+                        use_container_width=True)
+
+    # ── Orçamento x Realizado mensal ──────────────────────────
+    st.markdown('<div class="sec-title">📅 Orçamento x Realizado — Mensal</div>', unsafe_allow_html=True)
+
+    real_m = desp_f.groupby("mes_ano")["valor_despesa"].sum().reset_index()
+    orc_m  = df_orc.groupby("mes_ano")["valor_orcado"].sum().reset_index()
+    df_mensal = pd.merge(
+        orc_m.rename(columns={"mes_ano":"periodo"}),
+        real_m.rename(columns={"mes_ano":"periodo","valor_despesa":"realizado"}),
+        on="periodo", how="outer"
+    ).fillna(0).sort_values("periodo")
+
+    if not df_mensal.empty:
+        fig_m = go.Figure()
+        fig_m.add_trace(go.Bar(
+            name="Orçado", x=df_mensal["periodo"], y=df_mensal["valor_orcado"],
+            marker_color="#a0b4d8",
+            text=[fmt_brl(v) for v in df_mensal["valor_orcado"]],
+            textposition="outside", textfont=dict(size=9),
+        ))
+        fig_m.add_trace(go.Bar(
+            name="Realizado", x=df_mensal["periodo"], y=df_mensal["realizado"],
+            marker_color="#e95d0c",
+            text=[fmt_brl(v) for v in df_mensal["realizado"]],
+            textposition="outside", textfont=dict(size=9),
+        ))
+        fig_m.update_layout(
+            barmode="group", height=340, margin=dict(l=0,r=0,t=20,b=10),
+            paper_bgcolor="white", plot_bgcolor="white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            yaxis=dict(showgrid=True, gridcolor="#eee"),
+            xaxis=dict(tickangle=-30),
+        )
+        st.plotly_chart(fig_m, use_container_width=True)
+
+    # ── Acumulado ─────────────────────────────────────────────
+    st.markdown('<div class="sec-title">📈 Evolução Acumulada</div>', unsafe_allow_html=True)
+    if not df_mensal.empty:
+        df_mensal["acum_orc"]  = df_mensal["valor_orcado"].cumsum()
+        df_mensal["acum_real"] = df_mensal["realizado"].cumsum()
+        fig_a = go.Figure()
+        fig_a.add_trace(go.Scatter(
+            name="Orçado Acumulado", x=df_mensal["periodo"], y=df_mensal["acum_orc"],
+            line=dict(color="#1a2744", width=3, dash="dot"),
+            mode="lines+markers", marker=dict(size=7),
+        ))
+        fig_a.add_trace(go.Scatter(
+            name="Realizado Acumulado", x=df_mensal["periodo"], y=df_mensal["acum_real"],
+            line=dict(color="#e95d0c", width=3),
+            mode="lines+markers",
+            fill="tozeroy", fillcolor="rgba(233,93,12,0.07)",
+        ))
+        fig_a.update_layout(
+            height=300, margin=dict(l=0,r=0,t=20,b=10),
+            paper_bgcolor="white", plot_bgcolor="white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            yaxis=dict(showgrid=True, gridcolor="#eee"),
+        )
+        st.plotly_chart(fig_a, use_container_width=True)
+
+    # ── Tabela analítica ──────────────────────────────────────
+    st.markdown('<div class="sec-title">🔎 Tabela Analítica</div>', unsafe_allow_html=True)
+    if not desp_f.empty:
+        cols = [c for c in ["centro_custo","colaborador","tipo_despesa",
+                             "nr_viagem","data","valor_despesa"] if c in desp_f.columns]
+        tab = desp_f[cols].copy()
+        tab.rename(columns={"centro_custo":"Centro de Custo","colaborador":"Colaborador",
+                             "tipo_despesa":"Tipo de Despesa","nr_viagem":"Nº Viagem",
+                             "data":"Data","valor_despesa":"Valor (R$)"}, inplace=True)
+        if "Data" in tab.columns:
+            tab["Data"] = tab["Data"].dt.strftime("%d/%m/%Y")
+        if "Valor (R$)" in tab.columns:
+            tab["Valor (R$)"] = tab["Valor (R$)"].apply(fmt_brl)
+        tab = tab.sort_values(["Centro de Custo","Colaborador","Tipo de Despesa"])
+        st.dataframe(tab, use_container_width=True, height=380)
+    else:
+        st.info("Sem registros para os filtros selecionados.")
+
+
+# ═══════════════════════════════════════════════════════════
+# PÁGINA 2: FATURAMENTO X DESPESA REALIZADA
+# ═══════════════════════════════════════════════════════════
+else:
+
+    st.markdown('<div class="sec-title">📊 KPIs — Faturamento x Despesa</div>', unsafe_allow_html=True)
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        st.markdown(f"""<div class="kpi-card azul">
+            <div class="kpi-label">Faturamento {ANO_DASHBOARD}</div>
+            <div class="kpi-value">{fmt_brl(total_faturamento)}</div>
+            <div class="kpi-sub">Col C = "Considerar" | até {corte_label}</div>
+        </div>""", unsafe_allow_html=True)
+    with k2:
+        st.markdown(f"""<div class="kpi-card laranja">
+            <div class="kpi-label">Despesa Realizada</div>
+            <div class="kpi-value">{fmt_brl(total_despesa)}</div>
+            <div class="kpi-sub">Viagens até {corte_label}</div>
+        </div>""", unsafe_allow_html=True)
+    with k3:
+        pct_df = (total_despesa / total_faturamento * 100) if total_faturamento > 0 else 0
+        cor3   = "verde" if pct_df <= 5 else ("laranja" if pct_df <= 10 else "vermelho")
+        st.markdown(f"""<div class="kpi-card {cor3}">
+            <div class="kpi-label">Despesa / Faturamento</div>
+            <div class="kpi-value">{fmt_pct(pct_df)}</div>
+            <div class="kpi-sub">% da receita em viagens</div>
+        </div>""", unsafe_allow_html=True)
+    with k4:
+        st.markdown(f"""<div class="kpi-card verde">
+            <div class="kpi-label">Relação Fat / Desp</div>
+            <div class="kpi-value">{relacao_fat_desp:.1f}x</div>
+            <div class="kpi-sub">R$ faturados por R$ gasto</div>
+        </div>""", unsafe_allow_html=True)
+    with k5:
+        st.markdown(f"""<div class="kpi-card">
+            <div class="kpi-label">Orçamento Despesas</div>
+            <div class="kpi-value">{fmt_brl(total_orcado)}</div>
+            <div class="kpi-sub">% Realizado: {fmt_pct(pct_realizado)}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Gráficos ──────────────────────────────────────────────
+    gc1, gc2 = st.columns([3, 2])
+
+    with gc1:
+        st.markdown('<div class="sec-title">🏷 Faturamento por Sub-Região</div>', unsafe_allow_html=True)
+        if not fat_f.empty:
+            fs = fat_f.groupby("sub_regiao")["valor_faturamento"].sum().nlargest(14).reset_index()
+            fs = fs.sort_values("valor_faturamento", ascending=True)
+            labels = [str(x)[:32]+"..." if len(str(x))>32 else str(x) for x in fs["sub_regiao"]]
+            fig_sub = go.Figure(go.Bar(
+                x=fs["valor_faturamento"], y=labels,
+                orientation="h", marker_color="#e95d0c",
+                text=[fmt_brl(v) for v in fs["valor_faturamento"]],
+                textposition="outside",
+                textfont=dict(size=10, color="#1a2744", family="Arial Black"),
+            ))
+            fig_sub.update_layout(
+                height=460, margin=dict(l=0, r=120, t=10, b=10),
+                xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+                yaxis=dict(tickfont=dict(size=10)),
+                paper_bgcolor="white", plot_bgcolor="white",
+            )
+            st.plotly_chart(fig_sub, use_container_width=True)
+        else:
+            st.info("Sem dados de faturamento.")
+
+    with gc2:
+        st.markdown('<div class="sec-title">📡 Faturamento por Canal</div>', unsafe_allow_html=True)
+        if not fat_f.empty:
+            fc_data = fat_f.groupby("canal")["valor_faturamento"].sum().reset_index()
+            fig_p = go.Figure(go.Pie(
+                labels=fc_data["canal"],
+                values=fc_data["valor_faturamento"],
+                hole=0.45,
+                marker=dict(colors=["#1a2744","#e95d0c","#2980b9","#27ae60","#8e44ad","#f39c12"]),
+                textinfo="label+percent", textfont=dict(size=10),
+            ))
+            fig_p.update_layout(
+                height=460, margin=dict(l=0,r=0,t=10,b=10),
+                paper_bgcolor="white", showlegend=False,
+            )
+            st.plotly_chart(fig_p, use_container_width=True)
+
+    # ── Mensal comparativo ────────────────────────────────────
+    st.markdown('<div class="sec-title">📅 Faturamento x Despesa — Mensal</div>', unsafe_allow_html=True)
+
+    fat_m  = fat_f.groupby("mes_ano")["valor_faturamento"].sum().reset_index()
+    desp_m = desp_f.groupby("mes_ano")["valor_despesa"].sum().reset_index()
+    df_comp = pd.merge(
+        fat_m.rename(columns={"mes_ano":"periodo"}),
+        desp_m.rename(columns={"mes_ano":"periodo","valor_despesa":"despesa"}),
+        on="periodo", how="outer"
+    ).fillna(0).sort_values("periodo")
+
+    if not df_comp.empty:
+        fig_c = go.Figure()
+        fig_c.add_trace(go.Bar(
+            name="Faturamento", x=df_comp["periodo"], y=df_comp["valor_faturamento"],
+            marker_color="#1a2744",
+            text=[fmt_brl(v) for v in df_comp["valor_faturamento"]],
+            textposition="outside", textfont=dict(size=9),
+        ))
+        fig_c.add_trace(go.Scatter(
+            name="Despesa", x=df_comp["periodo"], y=df_comp["despesa"],
+            line=dict(color="#e95d0c", width=3),
+            mode="lines+markers+text",
+            text=[fmt_brl(v) for v in df_comp["despesa"]],
+            textposition="top center", textfont=dict(size=9, color="#e95d0c"),
+            yaxis="y2",
+        ))
+        fig_c.update_layout(
+            height=360, margin=dict(l=0,r=80,t=30,b=10),
+            paper_bgcolor="white", plot_bgcolor="white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            yaxis=dict(title="Faturamento (R$)", showgrid=True, gridcolor="#eee"),
+            yaxis2=dict(title="Despesa (R$)", overlaying="y", side="right", showgrid=False),
+            xaxis=dict(tickangle=-30),
+        )
+        st.plotly_chart(fig_c, use_container_width=True)
+
+    # ── Tabelas cruzadas ──────────────────────────────────────
+    st.markdown(
+        f'<div class="sec-title">🔎 Faturamento x Despesa — por Sub-Região / Canal</div>',
+        unsafe_allow_html=True
+    )
+
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        st.caption(f"**Faturamento por Sub-Região** — Jan a {corte_label}")
+        if not fat_f.empty:
+            t = fat_f.groupby("sub_regiao")["valor_faturamento"].sum().reset_index()
+            t = t.sort_values("valor_faturamento", ascending=False)
+            t.columns = ["Sub-Região", "Faturamento"]
+            total = pd.DataFrame([{"Sub-Região":"TOTAL",
+                                    "Faturamento": fat_f["valor_faturamento"].sum()}])
+            t = pd.concat([t, total], ignore_index=True)
+            t["Faturamento"] = t["Faturamento"].apply(fmt_brl)
+            st.dataframe(t, use_container_width=True, height=420)
+
+    with col_t2:
+        st.caption(f"**Despesa por Canal** — Jan a {corte_label}")
+        if not desp_f.empty:
+            t2 = desp_f.groupby("canal")["valor_despesa"].sum().reset_index()
+            t2 = t2.sort_values("valor_despesa", ascending=False)
+            t2.columns = ["Canal", "Despesa"]
+            total2 = pd.DataFrame([{"Canal":"TOTAL",
+                                     "Despesa": desp_f["valor_despesa"].sum()}])
+            t2 = pd.concat([t2, total2], ignore_index=True)
+            t2["Despesa"] = t2["Despesa"].apply(fmt_brl)
+            st.dataframe(t2, use_container_width=True, height=420)
+
+
+# ─────────────────────────────────────────────────────────────
+# FOOTER
+# ─────────────────────────────────────────────────────────────
+st.markdown("---")
+col_f1, col_f2 = st.columns([4, 1])
+with col_f1:
+    st.caption(
+        f"📁 `{CAMINHO_EXCEL}` · Modificado: **{ultima_mod}** · "
+        f"Período: Jan–{corte_label} · "
+        f"Faturamento: somente coluna C = 'Considerar' · Ano: {ANO_DASHBOARD}"
+    )
+with col_f2:
+    if st.button("🔄 Forçar recarga", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
